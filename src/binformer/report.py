@@ -6,7 +6,7 @@ from datetime import datetime
 
 from jinja2 import BaseLoader, Environment
 
-from binformer.performance import MoneyMetrics, PeriodResult
+from binformer.performance import HoldingRow, MoneyMetrics, PeriodResult
 
 _TEMPLATE = """\
 <!DOCTYPE html>
@@ -42,6 +42,8 @@ _TEMPLATE = """\
   .pos { color:#16a34a; font-weight:600; }
   .neg { color:#dc2626; font-weight:600; }
   .na  { color:#94a3b8; }
+  /* Holdings total row */
+  .holdings-total td { border-top:2px solid #e2e8f0 !important; }
   /* Chart */
   .chart-wrap { padding:8px 16px 20px; }
   .chart-wrap img { width:100%; border-radius:6px; }
@@ -104,6 +106,40 @@ _TEMPLATE = """\
   </table>
 </div>
 
+<!-- Current Holdings -->
+{% if holdings %}
+<div class="card">
+  <div class="section-title">Current Holdings &ndash; {{ metrics.report_date.strftime('%d %b %Y') }}</div>
+  <table>
+    <thead>
+      <tr>
+        <th>Asset</th>
+        <th>Amount</th>
+        <th>Price</th>
+        <th>Value</th>
+        <th>vs Prev Day</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for h in holdings %}
+      <tr>
+        <td>{{ h.coin }}</td>
+        <td>{{ fmt_amount(h.amount) }}</td>
+        <td>{{ fmt_price(h.price) }}</td>
+        <td>${{ '%.2f'|format(h.usdt_value) }}</td>
+        <td>{{ fmt_change(h.change_usdt, h.change_pct) }}</td>
+      </tr>
+      {% endfor %}
+      <tr class="holdings-total">
+        <td colspan="3"><strong>Total</strong></td>
+        <td><strong>${{ '%.2f'|format(holdings_total) }}</strong></td>
+        <td>{{ fmt_change(holdings_change_usdt, holdings_change_pct) }}</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
 <!-- Performance comparison -->
 <div class="card">
   <div class="section-title">Period Performance vs Benchmarks</div>
@@ -129,11 +165,21 @@ _TEMPLATE = """\
   </table>
 </div>
 
-<!-- Chart -->
+<!-- Absolute value chart -->
+{% if chart2_src %}
+<div class="card">
+  <div class="section-title">Trading PnL vs Benchmarks (USDT)</div>
+  <div class="chart-wrap">
+    <img src="{{ chart2_src }}" alt="Portfolio value chart">
+  </div>
+</div>
+{% endif %}
+
+<!-- Normalised returns chart -->
 <div class="card">
   <div class="section-title">Normalised Cumulative Return</div>
   <div class="chart-wrap">
-    <img src="data:image/png;base64,{{ chart_b64 }}" alt="Cumulative return chart">
+    <img src="{{ chart_src }}" alt="Cumulative return chart">
   </div>
 </div>
 
@@ -156,18 +202,76 @@ def _fmt_pct(value: float | None) -> str:
     return f'<span class="{cls}">{sign}{value * 100:.2f}%</span>'
 
 
+def _fmt_amount(amount: float) -> str:
+    if abs(amount) >= 100:
+        return f"{amount:.2f}"
+    if abs(amount) >= 1:
+        return f"{amount:.4f}"
+    return f"{amount:.6f}"
+
+
+def _fmt_price(price: float | None) -> str:
+    if price is None:
+        return "&mdash;"
+    if price >= 1000:
+        return f"${price:,.2f}"
+    if price >= 1:
+        return f"${price:.4f}"
+    return f"${price:.6f}"
+
+
+def _fmt_change(change_usdt: float | None, change_pct: float | None) -> str:
+    if change_usdt is None:
+        return '<span class="na">&mdash;</span>'
+    sign = "+" if change_usdt >= 0 else ""
+    cls = "pos" if change_usdt >= 0 else "neg"
+    pct_str = f" ({sign}{change_pct:.1f}%)" if change_pct is not None else ""
+    return f'<span class="{cls}">{sign}${change_usdt:.2f}{pct_str}</span>'
+
+
 def build_html_report(
     metrics: MoneyMetrics,
     periods: list[PeriodResult],
+    holdings: list[HoldingRow],
     chart_b64: str,
+    chart2_b64: str = "",
     generated_at: datetime | None = None,
+    *,
+    chart_cid: str | None = None,
+    chart2_cid: str | None = None,
 ) -> str:
+    chart_src = f"cid:{chart_cid}" if chart_cid else f"data:image/png;base64,{chart_b64}"
+    if chart2_b64:
+        chart2_src = f"cid:{chart2_cid}" if chart2_cid else f"data:image/png;base64,{chart2_b64}"
+    else:
+        chart2_src = ""
+
+    holdings_total = sum(h.usdt_value for h in holdings)
+    changes = [h.change_usdt for h in holdings if h.change_usdt is not None]
+    if changes:
+        holdings_change_usdt: float | None = sum(changes)
+        prev_total = holdings_total - holdings_change_usdt
+        holdings_change_pct: float | None = (
+            holdings_change_usdt / prev_total * 100 if abs(prev_total) > 1e-10 else None
+        )
+    else:
+        holdings_change_usdt = None
+        holdings_change_pct = None
+
     env = Environment(loader=BaseLoader(), autoescape=False)
     tmpl = env.from_string(_TEMPLATE)
     return tmpl.render(
         metrics=metrics,
         periods=periods,
-        chart_b64=chart_b64,
+        holdings=holdings,
+        holdings_total=holdings_total,
+        holdings_change_usdt=holdings_change_usdt,
+        holdings_change_pct=holdings_change_pct,
+        chart_src=chart_src,
+        chart2_src=chart2_src,
         fmt_pct=_fmt_pct,
+        fmt_amount=_fmt_amount,
+        fmt_price=_fmt_price,
+        fmt_change=_fmt_change,
         generated_at=generated_at or datetime.now(),
     )

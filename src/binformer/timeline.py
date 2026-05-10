@@ -39,15 +39,20 @@ def _total_usdt(
 
 
 def _print_snapshot(
-    label: str, dt: Any, balances: dict[str, float], prices: dict[str, pd.Series]
+    label: str,
+    dt: Any,
+    balances: dict[str, float],
+    prices: dict[str, pd.Series],
+    price_dt: Any = None,
 ) -> None:
+    p_dt = price_dt if price_dt is not None else dt
     total = 0.0
     lines: list[str] = []
     for coin in sorted(balances):
         amount = balances[coin]
         if abs(amount) <= 1e-10:
             continue
-        p = _price(coin, prices, dt)
+        p = _price(coin, prices, p_dt)
         if p is not None:
             val = amount * p
             total += val
@@ -67,12 +72,33 @@ def _parse_symbol(symbol: str) -> tuple[str, str]:
     return symbol[:-4], symbol[-4:]
 
 
+def _reconcile(
+    balances: dict[str, float],
+    snap: dict[str, float],
+    dt: date,
+) -> None:
+    """Overwrite balances with Binance-reported values; log any corrections."""
+    diffs: list[str] = []
+    all_coins = set(balances.keys()) | set(snap.keys())
+    for coin in sorted(all_coins):
+        had = balances.get(coin, 0.0)
+        got = snap.get(coin, 0.0)
+        if abs(had - got) > 1e-6:
+            diffs.append(f"    {coin}: {had:.8f} → {got:.8f}")
+        balances[coin] = got
+    if diffs:
+        print(f"  [Reconciled with Binance snapshot {dt}]", file=sys.stderr)
+        for line in diffs:
+            print(line, file=sys.stderr)
+
+
 def print_account_timeline(
     deposits_df: pd.DataFrame,
     trades: list[dict[str, Any]],
     prices: dict[str, pd.Series],
     snapshot_balances: dict[date, dict[str, float]] | None = None,
     starting_usdt: float = 0.0,
+    binance_snapshots: dict[date, dict[str, float]] | None = None,
 ) -> dict[date, dict[str, float]]:
     """Print a chronological account timeline to stderr and return reconstructed daily balances."""
 
@@ -142,9 +168,16 @@ def print_account_timeline(
                         balances[coin] = amount
                 current_day = earliest
 
+    # Record the state one day before the first tracked event so that
+    # usdt_values.iloc[0] reflects true initial capital, not post-deposit value.
+    daily_result[current_day - timedelta(days=1)] = {
+        c: a for c, a in balances.items() if abs(a) > 1e-10
+    }
+
     while current_day <= today:
+        prev_day = current_day - timedelta(days=1)
         if current_day in by_day:
-            _print_snapshot("Start of", current_day, balances, prices)
+            _print_snapshot("Start of", current_day, balances, prices, price_dt=prev_day)
 
             for e in by_day[current_day]:
                 if e["kind"] == "deposit":
@@ -184,9 +217,14 @@ def print_account_timeline(
                         file=sys.stderr,
                     )
 
+            if binance_snapshots and current_day in binance_snapshots:
+                _reconcile(balances, binance_snapshots[current_day], current_day)
+
             _print_snapshot("End of", current_day, balances, prices)
             print(file=sys.stderr)
         else:
+            if binance_snapshots and current_day in binance_snapshots:
+                _reconcile(balances, binance_snapshots[current_day], current_day)
             total = _total_usdt(balances, current_day, prices)
             print(f"  {current_day}: ${total:.4f}", file=sys.stderr)
 

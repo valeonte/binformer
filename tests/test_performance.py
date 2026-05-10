@@ -14,6 +14,7 @@ from binformer.performance import (
     compute_money_metrics,
     cumulative_returns,
     period_return,
+    pnl_series,
     snapshots_to_usdt,
 )
 
@@ -71,13 +72,18 @@ class TestBenchmarkReturn:
 
 
 class TestSnapshotsToUsdt:
-    def test_conversion(self, btc_prices: pd.Series) -> None:
+    def test_conversion(self, btc_prices: pd.Series, eth_prices: pd.Series) -> None:
         dates = btc_prices.index.tolist()[:3]
         snaps = pd.DataFrame(
-            {"total_btc": [1.0, 1.0, 1.0]},
+            {
+                "total_btc": [1.0, 1.0, 1.0],
+                "btc_free": [1.0, 1.0, 1.0],
+                "eth_free": [0.0, 0.0, 0.0],
+                "usdt_free": [0.0, 0.0, 0.0],
+            },
             index=pd.Index(dates, name="date"),
         )
-        result = snapshots_to_usdt(snaps, btc_prices)
+        result = snapshots_to_usdt(snaps, btc_prices, eth_prices)
         for d in dates:
             assert result[d] == pytest.approx(btc_prices[d])
 
@@ -139,10 +145,13 @@ class TestBuildPerformanceTable:
         eth_prices: pd.Series,
         inception: date,
     ) -> None:
+        # Fixtures: today=Apr 15 2026, inception=Apr 6 2026 (same year, <1M of data).
+        # YTD omitted (inception not before year_start). Monthly rows omitted (no data).
+        # Rows: Since Inception, MTD, Last day, Last 7 days, Last 14 days = 5.
         rows = build_performance_table(usdt_values, empty_cf, btc_prices, eth_prices, inception)
-        assert len(rows) == 9
+        assert len(rows) == 5
 
-    def test_insufficient_data_rows_are_none(
+    def test_long_period_rows_omitted_when_no_data(
         self,
         usdt_values: pd.Series,
         empty_cf: pd.Series,
@@ -151,8 +160,9 @@ class TestBuildPerformanceTable:
         inception: date,
     ) -> None:
         rows = build_performance_table(usdt_values, empty_cf, btc_prices, eth_prices, inception)
-        long_period = next(r for r in rows if r.label == "Last 3M")
-        assert long_period.strategy is None
+        labels = [r.label for r in rows]
+        assert "Last 3M" not in labels
+        assert "Last 1M" not in labels
 
     def test_since_inception_matches_full_twr(
         self,
@@ -188,3 +198,32 @@ class TestMoneyMetrics:
         metrics = compute_money_metrics(usdt_values, empty_cf, 0.0, 0.0, inception)
         last_date = usdt_values.index[-1]
         assert metrics.days_live == (last_date - inception).days
+
+
+class TestPnlSeries:
+    def test_starts_at_zero(self, usdt_values: pd.Series, empty_cf: pd.Series) -> None:
+        result = pnl_series(usdt_values, empty_cf)
+        assert result.iloc[0] == pytest.approx(0.0)
+
+    def test_no_cashflows_equals_value_gain(
+        self, usdt_values: pd.Series, empty_cf: pd.Series
+    ) -> None:
+        result = pnl_series(usdt_values, empty_cf)
+        expected = usdt_values.iloc[-1] - usdt_values.iloc[0]
+        assert result.iloc[-1] == pytest.approx(expected)
+
+    def test_deposit_subtracted_from_pnl(
+        self, usdt_values: pd.Series, cf_with_deposit: pd.Series
+    ) -> None:
+        result = pnl_series(usdt_values, cf_with_deposit)
+        expected = usdt_values.iloc[-1] - usdt_values.iloc[0] - 1_000.0
+        assert result.iloc[-1] == pytest.approx(expected)
+
+    def test_empty_returns_empty(self, empty_cf: pd.Series) -> None:
+        empty = pd.Series(dtype=float, name="usdt_value")
+        result = pnl_series(empty, empty_cf)
+        assert result.empty
+
+    def test_same_length_as_input(self, usdt_values: pd.Series, empty_cf: pd.Series) -> None:
+        result = pnl_series(usdt_values, empty_cf)
+        assert len(result) == len(usdt_values)

@@ -18,15 +18,23 @@ def send_email(
     to: list[str],
     subject: str,
     html: str,
+    inline_images: list[dict] | None = None,
 ) -> None:
-    """Send an HTML email via the SparkPost transmissions API."""
+    """Send an HTML email via the SparkPost transmissions API.
+
+    inline_images entries: {"name": str, "type": "image/png", "data": "<base64>"}
+    Reference in HTML with src="cid:<name>".
+    """
+    content: dict = {
+        "from": from_email,
+        "subject": subject,
+        "html": html,
+    }
+    if inline_images:
+        content["inline_images"] = inline_images
     payload = {
         "recipients": [{"address": addr} for addr in to],
-        "content": {
-            "from": from_email,
-            "subject": subject,
-            "html": html,
-        },
+        "content": content,
     }
     resp = requests.post(
         SPARKPOST_API,
