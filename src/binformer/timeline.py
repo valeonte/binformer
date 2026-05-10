@@ -72,8 +72,9 @@ def print_account_timeline(
     trades: list[dict[str, Any]],
     prices: dict[str, pd.Series],
     snapshot_balances: dict[date, dict[str, float]] | None = None,
-) -> None:
-    """Print a chronological account timeline to stderr."""
+    starting_usdt: float = 0.0,
+) -> dict[date, dict[str, float]]:
+    """Print a chronological account timeline to stderr and return reconstructed daily balances."""
 
     events: list[dict[str, Any]] = []
 
@@ -111,12 +112,16 @@ def print_account_timeline(
         by_day[e["date"]].append(e)
 
     balances: dict[str, float] = defaultdict(float)
+    daily_result: dict[date, dict[str, float]] = {}
 
     first_event_day = min(by_day) if by_day else date.today()
     today = date.today()
     current_day = first_event_day
 
-    if snapshot_balances:
+    if starting_usdt > 0:
+        balances["USDT"] = starting_usdt
+        print(f"  [Starting balance: USDT {starting_usdt:.4f}]", file=sys.stderr)
+    elif snapshot_balances:
         prior = {d: b for d, b in snapshot_balances.items() if d < first_event_day}
         if prior:
             init_date = max(prior)
@@ -185,4 +190,7 @@ def print_account_timeline(
             total = _total_usdt(balances, current_day, prices)
             print(f"  {current_day}: ${total:.4f}", file=sys.stderr)
 
+        daily_result[current_day] = {c: a for c, a in balances.items() if abs(a) > 1e-10}
         current_day += timedelta(days=1)
+
+    return daily_result
