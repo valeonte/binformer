@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "binformer"
+version = "0.1.0"
+description = "Binance spot-bot performance reporter"
+requires-python = ">=3.11"
+dependencies = [
+    "click>=8.1",
+    "jinja2>=3.1",
+    "matplotlib>=3.9",
+    "pandas>=2.2",
+    "python-dateutil>=2.9",
+    "requests>=2.31",
+]
+
+[project.scripts]
+binformer = "binformer.cli:main"
+
+[dependency-groups]
+dev = [
+    "pandas-stubs>=2.2",
+    "pytest>=8.0",
+    "pytest-mock>=3.14",
+    "ruff>=0.11",
+    "ty>=0.0.1a6",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/binformer"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/binformer/report.py" = ["E501"]  # HTML/CSS template lines are intentionally long
+"tests/**" = ["E501"]  # Long test signatures are fine
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
