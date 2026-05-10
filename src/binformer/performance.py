@@ -83,10 +83,26 @@ def cash_flows_to_usdt(
     return pd.Series(result, name="net_cf").rename_axis("date").sort_index()
 
 
-def snapshots_to_usdt(snapshots: pd.DataFrame, btc_prices: pd.Series) -> pd.Series:
-    """Convert totalAssetOfBtc snapshots to USDT using daily BTC close prices."""
+def snapshots_to_usdt(
+    snapshots: pd.DataFrame, btc_prices: pd.Series, eth_prices: pd.Series
+) -> pd.Series:
+    """Convert snapshots to USDT, pricing BTC/ETH/stablecoins directly to avoid double-conversion.
+
+    totalAssetOfBtc is computed by Binance at snapshot time using the BTC price then; multiplying
+    it by a different close price introduces error. Instead we price known assets directly and
+    use totalAssetOfBtc only for residual coins we don't track individually.
+    """
     btc = btc_prices.reindex(snapshots.index, method="ffill")
-    return (snapshots["total_btc"] * btc).rename("usdt_value").dropna()
+    eth = eth_prices.reindex(snapshots.index, method="ffill")
+    known_usdt = snapshots["usdt_free"] + snapshots["btc_free"] * btc + snapshots["eth_free"] * eth
+    # Residual: assets beyond BTC/ETH/stablecoins, approximated via totalAssetOfBtc.
+    residual_btc = (
+        snapshots["total_btc"]
+        - snapshots["btc_free"]
+        - snapshots["usdt_free"] / btc
+        - snapshots["eth_free"] * eth / btc
+    ).clip(lower=0)
+    return (known_usdt + residual_btc * btc).rename("usdt_value").dropna()
 
 
 def _price_on(prices: pd.Series, d: date) -> float | None:

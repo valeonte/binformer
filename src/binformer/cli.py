@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import click
+import pandas as pd
 
-from binformer.binance import INCEPTION_DATE, BinanceClient
+from binformer.binance import INCEPTION_DATE, STABLECOINS, BinanceClient
 from binformer.chart import build_chart
 from binformer.mailer import send_email
 from binformer.performance import (
@@ -20,6 +21,7 @@ from binformer.performance import (
     snapshots_to_usdt,
 )
 from binformer.report import build_html_report
+from binformer.timeline import print_account_timeline
 
 
 def _require_env(name: str) -> str:
@@ -86,8 +88,25 @@ def main(
     if snapshots.empty:
         raise click.ClickException("No account snapshots returned — check API key permissions.")
 
+    deposit_coins: set[str] = set(deposits_df["coin"].unique()) - STABLECOINS if not deposits_df.empty else set()
+    symbols = client.get_trade_symbols(deposit_coins)
+    click.echo(f"Fetching trades for {symbols}…")
+    trades = client.get_trades(symbols, inception)
+
+    coin_prices: dict[str, pd.Series] = {"BTC": btc_prices, "ETH": eth_prices}
+    for sym in symbols:
+        if sym in ("BTCUSDT", "ETHUSDT"):
+            continue
+        coin = sym.removesuffix("USDT")
+        try:
+            coin_prices[coin] = client.get_klines(sym, inception)
+        except Exception:
+            pass
+
+    print_account_timeline(deposits_df, trades, coin_prices, client.snapshot_coin_balances)
+
     net_cf = cash_flows_to_usdt(deposits_df, withdrawals_df, btc_prices, eth_prices)
-    usdt_values = snapshots_to_usdt(snapshots, btc_prices)
+    usdt_values = snapshots_to_usdt(snapshots, btc_prices, eth_prices)
 
     dep_total = float(net_cf[net_cf > 0].sum()) if not net_cf.empty else 0.0
     wd_total = float(abs(net_cf[net_cf < 0].sum())) if not net_cf.empty else 0.0
@@ -96,7 +115,7 @@ def main(
     periods = build_performance_table(usdt_values, net_cf, btc_prices, eth_prices, inception)
     cum = cumulative_returns(usdt_values, net_cf, btc_prices, eth_prices)
     chart_b64 = build_chart(cum)
-    html = build_html_report(metrics, periods, chart_b64)
+    html = build_html_report(metrics, periods, chart_b64, generated_at=datetime.now(UTC))
 
     report_date = date.today().strftime("%d %b %Y")
     if subject is None:
@@ -120,3 +139,7 @@ def main(
 
     if not output_path and not recipients:
         sys.stdout.write(html)
+
+
+if __name__ == "__main__":
+    main()

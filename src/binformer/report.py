@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from jinja2 import BaseLoader, Environment
 
 from binformer.performance import MoneyMetrics, PeriodResult
@@ -54,7 +56,7 @@ _TEMPLATE = """\
 <div class="card">
   <div class="header">
     <h1>Binance Spot Bot &mdash; Performance Report</h1>
-    <p>Generated {{ metrics.report_date.strftime('%A, %d %B %Y') }} &nbsp;&bull;&nbsp; Inception {{ metrics.inception_date.strftime('%d %b %Y') }} &nbsp;&bull;&nbsp; Day {{ metrics.days_live }}</p>
+    <p>Generated {{ generated_at.strftime('%A, %d %B %Y %H:%M:%S') }} &nbsp;&bull;&nbsp; Inception {{ metrics.inception_date.strftime('%d %b %Y') }} &nbsp;&bull;&nbsp; Day {{ metrics.days_live }}</p>
   </div>
 
   <!-- KPI strip -->
@@ -158,7 +160,14 @@ def build_html_report(
     metrics: MoneyMetrics,
     periods: list[PeriodResult],
     chart_b64: str,
+    generated_at: datetime | None = None,
 ) -> str:
     env = Environment(loader=BaseLoader(), autoescape=False)
     tmpl = env.from_string(_TEMPLATE)
-    return tmpl.render(metrics=metrics, periods=periods, chart_b64=chart_b64, fmt_pct=_fmt_pct)
+    return tmpl.render(
+        metrics=metrics,
+        periods=periods,
+        chart_b64=chart_b64,
+        fmt_pct=_fmt_pct,
+        generated_at=generated_at or datetime.now(),
+    )
