@@ -3,3 +3,4 @@ __pycache__
 .env
 .vscode
 user_data/
+live_data/
