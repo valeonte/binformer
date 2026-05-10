@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 from datetime import UTC, date, datetime
@@ -98,10 +99,8 @@ def main(
         if sym in ("BTCUSDT", "ETHUSDT"):
             continue
         coin = sym.removesuffix("USDT")
-        try:
+        with contextlib.suppress(Exception):
             coin_prices[coin] = client.get_klines(sym, inception)
-        except Exception:
-            pass
 
     print_account_timeline(deposits_df, trades, coin_prices, client.snapshot_coin_balances)
 
